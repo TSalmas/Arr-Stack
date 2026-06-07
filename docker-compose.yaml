@@ -1,0 +1,271 @@
+###############################################
+# Common Keys for all apps
+###############################################
+
+x-common-keys: &common-keys
+    restart: unless-stopped
+    logging:
+      driver: json-file
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/London
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+
+configs:
+  jellyfin-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"$${TS_CERT_DOMAIN}:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8096"}}}},
+      "AllowFunnel":{"$${TS_CERT_DOMAIN}:443":false}}
+
+  seerr-serve:
+    content: |
+      {"TCP":{"443":{"HTTPS":true}},
+      "Web":{"$${TS_CERT_DOMAIN}:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:5055"}}}},
+      "AllowFunnel":{"$${TS_CERT_DOMAIN}:443":false}}
+
+services:
+###############################################
+# RADARR - Movies
+###############################################
+  radarr:
+    <<: *common-keys
+    container_name: radarr
+    image: ghcr.io/hotio/radarr:latest
+    ports:
+      - 7878:7878
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /docker/appdata/radarr:/config
+      - /data:/data
+
+###############################################
+# SONARR - TV Shows
+###############################################
+
+  sonarr:
+    <<: *common-keys
+    container_name: sonarr
+    image: ghcr.io/hotio/sonarr:latest
+    ports:
+      - 8989:8989
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /docker/appdata/sonarr:/config
+      - /data:/data
+
+###############################################
+# LIDARR - Music
+###############################################
+
+  lidarr:
+    <<: *common-keys
+    container_name: lidarr
+    image: ghcr.io/hotio/lidarr:latest
+    ports:
+      - 8686:8686
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /docker/appdata/lidarr:/config
+      - /data:/data
+
+###############################################
+# BAZARR - Subtitles
+###############################################
+
+  bazarr:
+    <<: *common-keys
+    container_name: bazarr
+    image: ghcr.io/hotio/bazarr:latest
+    ports:
+      - 6767:6767
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /docker/appdata/bazarr:/config
+      - /data/media:/data/media
+
+###############################################
+# PROWLARR - Indexer Manager
+###############################################
+
+  prowlarr:
+    <<: *common-keys
+    container_name: prowlarr
+    image: ghcr.io/hotio/prowlarr:latest
+    ports:
+      - 9696:9696
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /docker/appdata/prowlarr:/config
+
+###############################################
+# FLARESOLVERR - Cloudflare Solver
+###############################################
+
+  flaresolverr:
+    <<: *common-keys
+    container_name: flaresolverr
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    ports:
+      - 8191:8191
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/London
+      LOG_LEVEL: info
+      LOG_FILE: none
+      LOG_HTML: "false"
+      CAPTCHA_SOLVER: none
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/lib/flaresolver:/config
+
+###############################################
+# QBITTORRENT - Downloader
+###############################################
+
+  qbittorrent:
+    <<: *common-keys
+    container_name: qbittorrent
+    image: ghcr.io/hotio/qbittorrent:latest
+    ports:
+      - 8080:8080
+      - 6881:6881
+      - 6881:6881/udp
+    environment:
+      - WEBUI_PORT=8080
+      - TORRENTING_PORT=6881
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /docker/appdata/qbittorrent:/config
+      - /data:/data
+
+###############################################
+# HOMARR - Homelab Dashboard
+###############################################
+
+  homarr:
+    <<: *common-keys
+    container_name: homarr
+    image: ghcr.io/homarr-labs/homarr:latest
+    ports:
+      - 7575:7575
+    environment:
+      SECRET_ENCRYPTION_KEY: ${HOMARR_SECRET_ENCRYPTION_KEY}
+      TZ: Europe/London
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /docker/appdata/homarr:/appdata
+      - /var/run/docker.sock:/var/run/docker.sock
+
+###############################################
+# SEERR TAILSCALE - Remote Access
+###############################################
+
+  seerr-ts:
+    image: tailscale/tailscale:latest
+    container_name: seerr-ts
+    hostname: seerr
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_AUTH_ONCE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - /docker/appdata/seerr-ts:/var/lib/tailscale
+    configs:
+      - source: seerr-serve
+        target: /config/serve.json
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    ports:
+      - 5055:5055
+    restart: unless-stopped
+
+###############################################
+# SEERR - Media Requests
+###############################################
+
+  seerr:
+    init: true
+    restart: unless-stopped
+    logging:
+      driver: json-file
+    container_name: seerr
+    image: ghcr.io/seerr-team/seerr:latest
+    network_mode: service:seerr-ts
+    depends_on:
+      - seerr-ts
+    environment:
+      TZ: Europe/London
+      LOG_LEVEL: info
+      PORT: 5055
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /docker/appdata/seerr:/app/config
+
+###############################################
+# JELLYFIN TAILSCALE - Remote Access
+###############################################
+
+  jellyfin-ts:
+    image: tailscale/tailscale:latest
+    container_name: jellyfin-ts
+    hostname: jellyfin
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_AUTH_ONCE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - /docker/appdata/jellyfin-ts:/var/lib/tailscale
+    configs:
+      - source: jellyfin-serve
+        target: /config/serve.json
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    ports:
+      - 8096:8096
+    restart: unless-stopped
+
+###############################################
+# JELLYFIN - Media Server
+###############################################
+
+  jellyfin:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/London
+    container_name: jellyfin
+    image: ghcr.io/hotio/jellyfin:latest
+    network_mode: service:jellyfin-ts
+    depends_on:
+      - jellyfin-ts
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /docker/appdata/jellyfin:/config
+      - /data/media:/data/media:ro #read-only
+
+###############################################
+# ARR Stack Dedicated Network
+###############################################
+
+networks:
+  default:
+    name: arr_network
+
+###############################################
+###############################################
